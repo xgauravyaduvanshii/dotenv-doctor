@@ -21,6 +21,9 @@ Honest note: this problem is not new. [`dotenv-safe`](https://github.com/rolodat
 ## Features
 
 - **Check** `.env` against `.env.example` — missing, empty and extra keys, each with file and line number.
+- **Multi-env support** — `check --env staging` validates `.env.staging` against `.env.example`, with per-env schema overrides from the schema file's `envs` map or a dedicated `env.schema.staging.json`.
+- **`fix`** — add missing keys with safe placeholder values (typed keys get a type-valid placeholder, secrets get `CHANGE_ME`), backing the original up to `.env.bak` first.
+- **`export`** — print the validated config as JSON or YAML, values redacted by default (`--include-values` prints them, with a stderr warning).
 - **Type validation** — `port`, `url`, `boolean`, `number`, `email`, `enum`, `regex` — from `env.schema.json` or inline comments (`# @type port`, `# @enum development,test,production`).
 - **Secret-shape warnings** — leading/trailing whitespace, surrounding quotes, and placeholder values on secret-looking keys (`*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `API_KEY`, …). Values are never printed, in text or JSON output.
 - **`init`** — generate a redacted `.env.example` and `env.schema.json` from an existing `.env` (values are never copied).
@@ -49,6 +52,36 @@ dotenv-doctor check --schema env.schema.json --strict --fail-on-empty --json
 ```
 
 Exit code is `0` when there are no errors and `1` otherwise. By default an empty value is a warning; `--fail-on-empty` (or `--strict`) makes it an error, and `--strict` also makes extra keys and secret-shape warnings fail the build.
+
+### Multi-env — `check --env <name>`
+
+```bash
+dotenv-doctor check --env staging            # .env.staging vs .env.example
+dotenv-doctor check --env production --strict
+```
+
+`--env staging` loads `.env.staging` instead of `.env`, and applies per-env schema overrides — first from the `envs` map in `env.schema.json`, then from a dedicated `env.schema.staging.json` file when you use the default schema location. For example, `NODE_ENV=staging` fails the base enum (`development,test,production`) but passes with a staging override that allows `staging`. See [Configuration](#configuration) and [`examples/env.schema.json`](examples/env.schema.json).
+
+### `fix` — add missing keys with safe placeholders
+
+```bash
+dotenv-doctor fix                            # add missing keys to .env
+dotenv-doctor fix --env staging              # add missing keys to .env.staging
+dotenv-doctor fix --force                    # overwrite an existing .env.bak
+```
+
+Adds every key that is in `.env.example` but missing from your `.env`, with a safe placeholder: typed keys get a type-valid value (`PORT=3000`, `DATABASE_URL=https://example.com`, `DEBUG=false`, `NODE_ENV=<first enum value>`), secret and string keys get `CHANGE_ME` — which `check` flags as a placeholder until you replace it with a real secret. The original file is backed up to `.env.bak` first; if a backup already exists, `fix` refuses unless you pass `--force`. If the env file does not exist, `fix` creates it. `fix` never writes a real secret — it only scaffolds placeholders you must replace.
+
+### `export` — print the validated config as JSON or YAML
+
+```bash
+dotenv-doctor export                         # JSON, values redacted
+dotenv-doctor export --format yaml           # YAML, values redacted
+dotenv-doctor export --env staging --format yaml
+dotenv-doctor export --include-values        # prints real values + a stderr warning
+```
+
+Exports the keys from `.env.example` with their type and value. Values are `"<redacted>"` by default — safe to paste into a ticket or a log. `--include-values` prints the real values and a warning on stderr; never share that output. `export` runs validation first and prints nothing (exit `1`) when the config has errors — fix it, then export.
 
 ### `init` — generate `.env.example` and `env.schema.json`
 
@@ -88,6 +121,22 @@ A JSON object mapping keys to rules. It takes precedence over inline comments.
 
 Supported types: `port` (integer 1–65535), `url` (http/https), `boolean` (`true`/`false`), `number`, `email`, `enum` (needs an `enum` list), `regex` (needs a `pattern`), `string` (no check).
 
+### Per-environment overrides
+
+Two ways, both optional — the base rules above still apply unless overridden:
+
+```json
+{
+  "NODE_ENV": { "type": "enum", "enum": ["development", "test", "production"] },
+  "envs": {
+    "staging": { "NODE_ENV": { "type": "enum", "enum": ["staging", "production"] } },
+    "production": { "NODE_ENV": { "type": "enum", "enum": ["production"] } }
+  }
+}
+```
+
+Or a dedicated file next to it: `env.schema.staging.json` (applied only when you use the default schema location, i.e. without `--schema`). Per-key rules are merged — an override only replaces the fields it sets, and JSON schema rules still win over inline comments.
+
 ### Inline comments
 
 If you do not want a schema file, annotate `.env.example` directly:
@@ -122,7 +171,27 @@ dotenv-doctor check fixtures/.env.good fixtures/.env.example --schema fixtures/e
 
 # Fails (exit 1) — bad port, bad URL, bad enum, bad boolean, placeholder secret, extra key
 dotenv-doctor check examples/.env.bad examples/.env.example --schema examples/env.schema.json
+
+# Multi-env: passes with the staging override, fails without it
+dotenv-doctor check --env staging examples/.env.staging examples/.env.example --schema examples/env.schema.json
+dotenv-doctor check --env staging examples/.env.staging examples/.env.example
+
+# Fix a partial file, then export the validated config (values redacted)
+dotenv-doctor fix
+dotenv-doctor export --format yaml
 ```
+
+## Changelog
+
+### 0.2.0
+
+- **Multi-env support** — `check --env staging|production` loads `.env.<env>` against `.env.example`, with per-env schema overrides from the schema file's `envs` map or a dedicated `env.schema.<env>.json`.
+- **`fix` command** — adds missing keys with safe placeholders (typed keys get type-valid values, secrets get `CHANGE_ME`), backs the original up to `.env.bak`, refuses to overwrite an existing backup without `--force`.
+- **`export` command** — prints the validated config as JSON (default) or YAML; values are `"<redacted>"` unless `--include-values` is passed, which warns on stderr. Export fails with no output when validation finds errors.
+
+### 0.1.0
+
+- Initial release — `check`, `init`, `diff`, type validation from `env.schema.json` or inline comments, secret-shape warnings, CI mode (`--strict`, `--fail-on-empty`, `--json`).
 
 ## How it handles secrets
 

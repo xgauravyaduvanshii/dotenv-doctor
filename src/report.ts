@@ -75,3 +75,42 @@ export function formatDiffJson(diff: DiffResult): string {
     2,
   );
 }
+
+export interface ExportEntry {
+  key: string;
+  type?: string;
+  /** Value as stored, or "<redacted>" when values are hidden. Never null. */
+  value: string;
+  present: boolean;
+}
+
+/** Quote a scalar for YAML output. JSON double-quoting is valid YAML. */
+function yamlScalar(value: string): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * Export the validated config as JSON. Values are "<redacted>" unless the
+ * caller explicitly included them (see `export` in cli.ts, which warns).
+ */
+export function formatExportJson(envName: string | undefined, entries: ExportEntry[]): string {
+  const keys: Record<string, { type: string; value: string; present: boolean }> = {};
+  for (const entry of entries) {
+    keys[entry.key] = { type: entry.type ?? "string", value: entry.value, present: entry.present };
+  }
+  return JSON.stringify({ env: envName ?? null, keys }, null, 2);
+}
+
+/** Export the validated config as YAML, same shape as `formatExportJson`. */
+export function formatExportYaml(envName: string | undefined, entries: ExportEntry[]): string {
+  const lines: string[] = [];
+  lines.push(`env: ${envName ? yamlScalar(envName) : "null"}`);
+  lines.push("keys:");
+  for (const entry of entries) {
+    lines.push(`  ${entry.key}:`);
+    lines.push(`    type: ${yamlScalar(entry.type ?? "string")}`);
+    lines.push(`    value: ${yamlScalar(entry.value)}`);
+    lines.push(`    present: ${entry.present ? "true" : "false"}`);
+  }
+  return lines.join("\n");
+}
